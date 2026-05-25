@@ -110,18 +110,10 @@ public class MainActivity extends AppCompatActivity {
                 != PackageManager.PERMISSION_GRANTED) {
             needed.add(Manifest.permission.RECORD_AUDIO);
         }
-        // Android 11+ requires MANAGE_EXTERNAL_STORAGE for public storage access
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
-            if (ContextCompat.checkSelfPermission(this, Manifest.permission.MANAGE_EXTERNAL_STORAGE)
-                    != PackageManager.PERMISSION_GRANTED) {
-                needed.add(Manifest.permission.MANAGE_EXTERNAL_STORAGE);
-            }
-        } else if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.P) {
-            // Android 9 and below only
-            if (ContextCompat.checkSelfPermission(this, Manifest.permission.WRITE_EXTERNAL_STORAGE)
-                    != PackageManager.PERMISSION_GRANTED) {
-                needed.add(Manifest.permission.WRITE_EXTERNAL_STORAGE);
-            }
+        // Request storage write permission for all Android versions
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.WRITE_EXTERNAL_STORAGE)
+                != PackageManager.PERMISSION_GRANTED) {
+            needed.add(Manifest.permission.WRITE_EXTERNAL_STORAGE);
         }
 
         if (needed.isEmpty()) {
