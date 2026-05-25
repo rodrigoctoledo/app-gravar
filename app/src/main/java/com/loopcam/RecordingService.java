@@ -7,6 +7,7 @@ import android.app.PendingIntent;
 import android.app.Service;
 import android.content.Intent;
 import android.os.Build;
+import android.os.Environment;
 import android.os.Handler;
 import android.os.IBinder;
 import android.os.Looper;
@@ -95,7 +96,8 @@ public class RecordingService extends Service implements LifecycleOwner {
         cameraExecutor = Executors.newSingleThreadExecutor();
         mainHandler    = new Handler(Looper.getMainLooper());
 
-        outputDir = new File(getExternalFilesDir(null), "LoopCam");
+        // Save videos to public Movies folder for Android 11+ compatibility
+        outputDir = new File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MOVIES), "LoopCam");
         if (!outputDir.exists()) outputDir.mkdirs();
 
         File[] existing = outputDir.listFiles();

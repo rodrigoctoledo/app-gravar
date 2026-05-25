@@ -4,11 +4,11 @@
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
 
-    <!-- Storage: only needed on Android 9 (API 28) and below.
-         Android 10+ (API 29+): getExternalFilesDir() requires NO permission.
-         Android 11 (API 30): WRITE_EXTERNAL_STORAGE is ignored by the system entirely. -->
+    <!-- Storage permissions for saving videos to public Movies folder -->
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE"
         android:maxSdkVersion="28" />
+    <!-- Required for Android 11+ to access shared storage -->
+    <uses-permission android:name="android.permission.MANAGE_EXTERNAL_STORAGE" />
 
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_CAMERA" />
