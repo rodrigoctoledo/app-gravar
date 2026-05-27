@@ -49,8 +49,8 @@ public class RecordingService extends Service implements LifecycleOwner {
 
     // Segment duration: 1 minute
     private static final long RECORDING_SEGMENT_MS = 60 * 1000L;
-    // Minimum free space to keep before deleting oldest file
-    private static final long MIN_FREE_SPACE_BYTES = 500L * 1024 * 1024;
+    // Maximum folder size: 6GB
+    private static final long MAX_FOLDER_SIZE_BYTES = 6L * 1024 * 1024 * 1024;
     // Storage check interval
     private static final long STORAGE_CHECK_INTERVAL_MS = 15 * 1000L;
 
@@ -84,6 +84,11 @@ public class RecordingService extends Service implements LifecycleOwner {
 
     private volatile boolean keepLooping = false;
 
+    // Motion detection and LED control
+    private MotionDetector motionDetector;
+    private LEDController ledController;
+    private Timer ledStateTimer;
+
     // ─── Lifecycle ─────────────────────────────────────────────────────────
 
     @Override
@@ -95,6 +100,9 @@ public class RecordingService extends Service implements LifecycleOwner {
 
         cameraExecutor = Executors.newSingleThreadExecutor();
         mainHandler    = new Handler(Looper.getMainLooper());
+
+        // Initialize LED controller
+        ledController = new LEDController(this);
 
         // Save videos to public Movies folder for Android 11+ compatibility
         outputDir = new File(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_MOVIES), "LoopCam");
@@ -131,6 +139,8 @@ public class RecordingService extends Service implements LifecycleOwner {
             });
             startStorageMonitor();
             startStatusBroadcast();
+            startMotionDetection();
+            startLEDStateMonitor();
         }
 
         return START_STICKY;
@@ -259,31 +269,56 @@ public class RecordingService extends Service implements LifecycleOwner {
 
     private void checkAndFreeStorage() {
         try {
-            StatFs stat = new StatFs(outputDir.getPath());
-            long available = stat.getAvailableBytes();
-            if (available < MIN_FREE_SPACE_BYTES) {
-                Log.w(TAG, "Low storage (" + (available / 1024 / 1024) + " MB) — deleting oldest");
-                deleteOldestRecording();
+            long folderSize = calculateFolderSize(outputDir);
+            
+            if (folderSize > MAX_FOLDER_SIZE_BYTES) {
+                long excessBytes = folderSize - MAX_FOLDER_SIZE_BYTES;
+                long excessGB = excessBytes / (1024 * 1024 * 1024);
+                long excessMB = (excessBytes % (1024 * 1024 * 1024)) / (1024 * 1024);
+                
+                Log.w(TAG, "Folder size exceeded (" + excessGB + "GB " + excessMB + "MB) — deleting oldest");
+                deleteOldestRecordings(excessBytes);
             }
         } catch (Exception e) {
             Log.e(TAG, "Storage check failed", e);
         }
     }
 
-    private void deleteOldestRecording() {
+    private long calculateFolderSize(File folder) {
+        long size = 0;
+        File[] files = folder.listFiles();
+        if (files != null) {
+            for (File file : files) {
+                if (file.isFile()) {
+                    size += file.length();
+                }
+            }
+        }
+        return size;
+    }
+
+    private void deleteOldestRecordings(long targetBytesToFree) {
         File[] files = outputDir.listFiles(f -> f.getName().endsWith(".mp4"));
         if (files == null || files.length == 0) return;
 
         Arrays.sort(files, Comparator.comparingLong(File::lastModified));
 
+        long freedBytes = 0;
         for (File file : files) {
             // Never delete the segment currently being written
             if (!file.getName().equals(currentFileName)) {
-                long mb = file.length() / 1024 / 1024;
+                long fileSize = file.length();
+                long mb = fileSize / (1024 * 1024);
+                
                 if (file.delete()) {
+                    freedBytes += fileSize;
                     fileCount = Math.max(0, fileCount - 1);
                     Log.i(TAG, "Deleted " + file.getName() + " (" + mb + " MB freed)");
-                    break; // one at a time; monitor runs again in 15 s
+                    
+                    // Stop deleting when we've freed enough space
+                    if (freedBytes >= targetBytesToFree) {
+                        break;
+                    }
                 }
             }
         }
@@ -349,6 +384,50 @@ public class RecordingService extends Service implements LifecycleOwner {
         }
     }
 
+    // ─── Motion detection ──────────────────────────────────────────────────
+
+    private void startMotionDetection() {
+        if (motionDetector != null) return;
+
+        motionDetector = new MotionDetector(this, () -> {
+            if (ledController != null) {
+                ledController.flashLED();
+            }
+        });
+        motionDetector.start();
+        Log.d(TAG, "Motion detection started");
+    }
+
+    private void stopMotionDetection() {
+        if (motionDetector != null) {
+            motionDetector.stop();
+            motionDetector.release();
+            motionDetector = null;
+            Log.d(TAG, "Motion detection stopped");
+        }
+    }
+
+    // ─── LED state monitor ─────────────────────────────────────────────────
+
+    private void startLEDStateMonitor() {
+        ledStateTimer = new Timer("LEDStateMonitor", true);
+        ledStateTimer.scheduleAtFixedRate(new TimerTask() {
+            @Override
+            public void run() {
+                if (ledController != null) {
+                    ledController.updateLEDState();
+                }
+            }
+        }, 0, 60 * 1000); // Check every minute
+    }
+
+    private void stopLEDStateMonitor() {
+        if (ledStateTimer != null) {
+            ledStateTimer.cancel();
+            ledStateTimer = null;
+        }
+    }
+
     // ─── Stop everything ───────────────────────────────────────────────────
 
     private void stopEverything() {
@@ -358,6 +437,13 @@ public class RecordingService extends Service implements LifecycleOwner {
         cancelSegmentTimer();
         if (storageTimer != null) { storageTimer.cancel(); storageTimer = null; }
         if (statusTimer  != null) { statusTimer.cancel();  statusTimer  = null; }
+
+        stopMotionDetection();
+        stopLEDStateMonitor();
+        if (ledController != null) {
+            ledController.release();
+            ledController = null;
+        }
 
         if (activeRecording != null) {
             activeRecording.stop();
